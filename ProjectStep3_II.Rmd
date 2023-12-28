@@ -1,0 +1,344 @@
+---
+title: '(F23) PSTAT 126: Project Step 3'
+author: "Anthony Cu and William Mahnke"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NULL)
+
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(GGally)
+library(tidymodels)
+library(modelr)
+library("alr4")
+library("MASS")
+library(leaps)
+
+# load data 
+houseData <- read.csv("~/Desktop/Projects/PSTAT 126/Project/ProjectStep4/houseData.csv")
+```
+
+### Introduction
+In our project, we explore the 1990 California Housing data set, providing information on a specified district in the state. The survey data describes homes in a district of California in 1990 in order to represent the larger population of this district during the 1990's overall. Each independent observation corresponds to a different block within the district. The data set comes from Kaggle's data repository.
+
+We focus on our response median house value, and its predictors: median house age, median income, population, households, number of bedrooms, number of bathrooms, and ocean proximity. 
+
+```{r quantitative predictor scatterplots, fig.align='center', include = FALSE}
+houseData[-c(1:3, 12)] %>%
+  dplyr::select(-c(ocean_proximity)) %>%
+  pivot_longer(cols = -median_house_value) %>%
+  ggplot(aes(x = value, y= median_house_value)) +
+  facet_wrap(~name, scales = 'free_x') +
+  geom_point(size = 0.35) +
+  geom_smooth(method = "lm", se = FALSE, alpha = 0.15) +
+  labs(x = "", y = "Median House Value")
+```
+
+### Pairs Plot on Explanatory and Response Variables
+```{r ggpairs to check for correlation of categorical variables, fig.align='center', out.width = "80%"}
+ggpairs(houseData[-c(1:3, 12)], columns = 1:6, axisLabels="none", aes(color = ocean_proximity, alpha = 0.5),
+        upper = list(continuous = wrap("cor", size = 1.5))) + 
+  theme_bw()
+```
+
+We observe that there is a high correlation between some pairs of explanatory variables, including total bedrooms and total rooms, population and total rooms, population and total bedrooms, and more shown in the correlation plot. Additionally we see that population and households has a positive linear relationship. When finding an optimal model using the training data, we will consider interaction terms for these pairs of highly correlated variables.
+
+### Dividing the data 
+```{r partition}
+set.seed(1234567)
+housePartition <- resample_partition(data = houseData[-c(1:3, 12)], p = c(train = 0.7, test = 0.3))
+housePartition$train <- as.data.frame(housePartition$train)
+housePartition$test <- as.data.frame(housePartition$test)
+```
+
+We will split our data into two groups. Seventy percent of the data will be used for finding and training a model while the remaining 30% will be used to perform significance tests, analyze unusual observations, and calculating other important aspects of the model such as $R^2_{adj}$, $R^2$, and confidence and prediction intervals.
+
+### Checking Model Assumptions
+We first fit our naive model in which we enter all our predictors linearly, through: 
+```{r naive model, echo = T}
+naive_model <- lm(median_house_value ~ ., data = housePartition$train)
+```
+
+```{r naive model fit, fig.align='center'}
+augment(naive_model, housePartition$train) %>%
+  pivot_longer(cols = c(housing_median_age, households, total_rooms, total_bedrooms, population, median_income)) %>%
+  ggplot(aes(y = .resid, x = value)) +
+  facet_wrap(~ name, scales = 'free_x') +
+  geom_point(size = 0.5) +
+  geom_hline(aes(yintercept = 0)) +
+  geom_smooth(method = 'loess', formula = 'y ~ x', se = F, span = 1) +
+  labs(title = "Residuals vs Predictors")
+```
+
+```{r residual vs fitted plot, fig.show='hold', out.width="50%"}
+# residuals vs fitted values
+housePartition$train %>%
+  add_residuals(naive_model, var = 'resid') %>%
+  add_predictions(naive_model, var = 'fitted') %>%
+  ggplot(aes(x = fitted, y = resid)) + geom_point() + geom_hline(aes(yintercept = 0)) +
+  geom_smooth(method = 'loess', formula = 'y ~ x', se = F, span = 1) +
+  labs(title = "Residuals vs Fitted Values")
+
+# qqplot
+augment(naive_model, housePartition$train) %>%
+  ggplot(aes(sample = .resid)) +
+  geom_qq() +
+  geom_qq_line() +
+  labs(title = "Quantile-quantile plot")
+```
+
+Looking at the diagnostic plots for our naive model, we observed that linear assumption is not met for median income, households, and total rooms. Additionally, the residual vs fitted plot shows the constant variance assumption is also not met. We noticed that households and median income resembled a quadratic shape in its residual vs predictor plot, so we transformed our model by entering households and median income as a quadratic and a cubic respectively. 
+```{r fittedModel1, echo = T}
+fitted_model1 <- lm(median_house_value ~ ocean_proximity + housing_median_age +
+                      poly(households, 2, raw = T) + total_rooms +
+                      total_bedrooms + population + poly(median_income, 3, raw = T), 
+                    data= housePartition$train)
+```
+
+```{r fit1 plot, fig.align='center'}
+# we use augment() to add .resid
+augment(fitted_model1, housePartition$train) %>%
+  pivot_longer(cols = c(housing_median_age, households, total_rooms, total_bedrooms, population, median_income)) %>%
+  ggplot(aes(y = .resid, x = value)) +
+  facet_wrap(~ name, scales = 'free_x') +
+  geom_point(size = 0.5) +
+  geom_hline(aes(yintercept = 0)) +
+  geom_smooth(method = 'loess', formula = 'y ~ x', se = F, span = 1) +
+  labs(title = "Residuals vs Predictors")
+```
+
+```{r fit1: diagnostics, fig.show='hold', out.width="50%"}
+# residuals vs fitted values
+housePartition$train %>%
+  add_residuals(fitted_model1, var = 'resid') %>%
+  add_predictions(fitted_model1, var = 'fitted') %>%
+  ggplot(aes(x = fitted, y = resid)) + geom_point() + geom_hline(aes(yintercept = 0)) +
+  geom_smooth(method = 'loess', formula = 'y ~ x', se = F, span = 1) +
+  labs(title = "Residuals vs Fitted Values")
+
+# qqplot
+augment(fitted_model1, housePartition$train) %>%
+  ggplot(aes(sample = .resid)) +
+  geom_qq() +
+  geom_qq_line() +
+  labs(title = "Quantile-quantile plot")
+```
+
+The lack of a pattern in the residual vs predictor plots for our new model suggest that the linearity assumption is now met. The residual vs fitted plot for this new model also doesn't show any recognizable pattern, confirming that the constant variance assumption is met. The quantile-quantile plot shows that normality assumption is also met. Additionally, observations in our data correlate to different blocks within a district. So while there isn't a diagnostic plot to check for the independence assumption, the nature of our data should ensure that assumption is also met. 
+
+### Variable Selection
+
+As our pairs plot showed earlier, we thought it was important to include interaction terms when picking an optimal. We begin our variable selection by defining our null and full models using the training data and then performing backwards selection on our full model.  
+```{r variable selection, results = "hide"}
+model_null <- lm(median_house_value ~ 1, data = housePartition$train)
+
+# this is our full model with all interaction terms between all variables
+model_full <- lm(median_house_value ~.^2, data = housePartition$train)
+
+# backwards selection 
+stats::step(model_full, direction = "backward")
+```
+
+From performing the backward selection, we fit our second linear model accounting for certain interaction terms between predictors. Some of the interaction terms are reflected in the variables with high correlation from the pairs plot shown earlier. 
+```{r fit2 model, echo = T}
+fitted_model2 <- lm(median_house_value ~ housing_median_age + total_rooms + 
+    total_bedrooms + population + households + median_income + 
+    ocean_proximity + housing_median_age:total_rooms + housing_median_age:population + 
+    housing_median_age:households + total_rooms:total_bedrooms + 
+    total_rooms:population + total_bedrooms:population + total_bedrooms:households + 
+    total_bedrooms:median_income + population:median_income + 
+    median_income:ocean_proximity, data = housePartition$train)
+```
+
+```{r fit2 plot, fig.align='center'}
+# we use augment() to add .resid
+augment(fitted_model2, housePartition$train) %>%
+  pivot_longer(cols = c(housing_median_age, households, total_rooms, total_bedrooms, population, median_income)) %>%
+  ggplot(aes(y = .resid, x = value)) +
+  facet_wrap(~ name, scales = 'free_x') +
+  geom_point(size = 0.5) +
+  geom_hline(aes(yintercept = 0)) +
+  geom_smooth(method = 'loess', formula = 'y ~ x', se = F, span = 1) +
+  labs(title = "Residuals vs Predictors")
+```
+
+```{r fit2: diagnostics, fig.show='hold', out.width="50%"}
+# residuals vs fitted values
+housePartition$train %>%
+  add_residuals(fitted_model2, var = 'resid') %>%
+  add_predictions(fitted_model2, var = 'fitted') %>%
+  ggplot(aes(x = fitted, y = resid)) + geom_point() + geom_hline(aes(yintercept = 0)) +
+  geom_smooth(method = 'loess', formula = 'y ~ x', se = F, span = 1) +
+  labs(title = "Residuals vs Fitted Values")
+
+# qqplot
+augment(fitted_model2, housePartition$train) %>%
+  ggplot(aes(sample = .resid)) +
+  geom_qq() +
+  geom_qq_line() +
+  labs(title = "Quantile-quantile plot")
+```
+Checking the model assumptions for this new model, we see that linearity, constant variance, and normality are satisfied again. Independence follows too since the nature of the data hasn't changed. 
+Now that we have two valid models, one produced from entering in terms to satisfy the model assumptions and the  other from backwards selection, we will compared their AIC, BIC, and $R^2_{adj}$ to select a single 'best' model to use on the testing data we set aside earlier.
+
+```{r best model criteria, eval = F}
+AIC(fitted_model1, fitted_model2)
+BIC(fitted_model1, fitted_model2)
+summary(fitted_model1)$adj.r.squared
+summary(fitted_model2)$adj.r.squared
+```
+
+We now check criteria to determine which fitted model is better.
+
+- The AIC (Akaike Information Criterion) of fitted_model1 is `r AIC(fitted_model1)` > `r AIC(fitted_model2)`, the AIC of fitted_model2. So, fitted_model2 minimizes AIC and thus prioritizes predictive accuracy. 
+- To add on, the BIC (Bayesia Information Criterion) of fitted_model1 is `r BIC(fitted_model1)` > `r BIC(fitted_model2)`, the BIC of fitted_model2. So, fitted_model2 minimizes BIC and thus priorities selection consistency.
+- Finally, the adjusted $R^2$ of fitted_model1 is `r summary(fitted_model1)$adj.r.squared` < `r summary(fitted_model2)$adj.r.squared`, the adjusted $R^2$ of fitted_model2. So, fitted_model2 maximizes adjusted $R^2$ and thus prioritzies model fit. 
+
+## Statistical Method
+
+```{r test model, results = "hide"}
+fit <- lm(median_house_value ~ housing_median_age + total_rooms + 
+    total_bedrooms + population + households + median_income + 
+    ocean_proximity + housing_median_age:total_rooms + housing_median_age:population + 
+    housing_median_age:households + total_rooms:total_bedrooms + 
+    total_rooms:population + total_bedrooms:population + total_bedrooms:households + 
+    total_bedrooms:median_income + population:median_income + 
+    median_income:ocean_proximity, data = housePartition$test)
+```
+
+```{r summary}
+summary(fit)
+```
+
+Looking at the summary of our model using the testing data and assuming a p-value of 0.1, we see that the statistically significant predictors in our model are median income, households, the indicator variable when ocean proximity is near the ocean, total bedrooms interacting with households, total bedrooms interacting with median income, population interacting with median_income, median income when the ocean proximity is inland, and median income when the ocean proximity is near ocean. 
+
+Our model shows that fixing all other variables, a \$10000 increase in median income increases the average median house value by about \$52000. The significance in the relationship makes sense. Looking at the interaction terms involving median income and ocean proximity, we see that the association between mean median house value and median income decreases by about \$7118 per \$10000 of median income when the neighborhood is considered inland. Additionally, the association between mean median house value and median income increases by about \$47670 per \$10000 of median income when the neighborhood is considered near the ocean. In real life, these two relationships make sense as well.
+
+The significance of certain predictors over others indicates that median income, households, and ocean proximity are the most important factors when estimating the median house price of the sample. While other factors are just as important in determining the value of a household, it makes sense that location and the quality of families (determined by median income and households) are the most important indicators of house value, especially in California. Families with a higher income are going to be able to afford more expensive houses and houses by the ocean are generally more expensive because of they're in a more preferable location.
+
+On the test data, the $R^2$ = `r summary(fit)$r.squared` and the $R_{adj}^2$ = `r summary(fit)$adj.r.squared`. This means that about 80% of the variance is explained by our model.
+
+A high $R^2$ is not necessarily a guarantee that the model will accurately describe the population because the calculated $R^2$ value only accounts for values within the sample and doesn't include the entire population.
+
+### Analysis
+```{r unusual, out.width = "60%", fig.align='center'}
+# we find our unusual points
+augment(fit, housePartition$test) %>% 
+  pivot_longer(cols = c(.resid, .hat, .cooksd)) %>%
+  group_by(name) %>%
+  slice_max(order_by = abs(value), n = 3) %>%
+  dplyr::select(.rownames, name, value)
+
+unusual_obs <- augment(fit, housePartition$test) %>% 
+  pivot_longer(cols = c(.resid, .hat, .cooksd)) %>%
+  group_by(name) %>%
+  slice_max(order_by = abs(value), n = 3) %>%
+  ungroup()
+
+augment(fit, housePartition$test) %>%
+  pivot_longer(cols = c(.resid, .hat, .cooksd)) %>%
+  ggplot(aes(x = .rownames, y = value)) +
+  facet_wrap(~ name, scales = 'free_y', nrow = 3) + 
+  geom_point(size = 0.4) +
+  geom_hline(aes(yintercept = 0)) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.25)) + 
+  labs(x = '', y = '', title = 'Residuals, leverage points, and Cooks distances for each observation') + 
+  geom_point(data = unusual_obs, color = 'red', size = 0.4)
+
+# pivot for plotting
+unusual_obs_long <- unusual_obs %>%
+  rename(case = name) %>%
+  dplyr::select(housing_median_age, total_rooms, total_bedrooms, population, households, median_income, .rownames, case) %>%
+  pivot_longer(cols = c(housing_median_age, total_rooms, total_bedrooms, population, households, median_income))
+
+housePartition$test %>%
+  pivot_longer(cols = c(housing_median_age, total_rooms, total_bedrooms, population, households, median_income)) %>%
+  ggplot(aes(x = value, y = median_house_value)) +
+  facet_wrap(~ name, scales = 'free_x') +
+  geom_point(size = 0.35) + 
+  geom_point(data = unusual_obs %>%
+               rename(case = name) %>% 
+               dplyr::select(housing_median_age, total_rooms, total_bedrooms, population, households, median_income, median_house_value, .rownames, case) %>%
+  pivot_longer(cols = c(housing_median_age, total_rooms, total_bedrooms, population, households, median_income)), 
+                       aes(color = case, shape = case), 
+                       size = 3, alpha = 0.5) + 
+  labs(title = "Scatterplots Highlighting Unusual Observations")
+
+unusual_idx <- augment(fit, housePartition$test) %>%
+  mutate(idx = row_number()) %>%
+  slice_max(order_by = abs(.resid), n = 1) %>%
+  pull(idx)
+```
+
+```{r plot W/0, fig.show='hold', out.width="50%"}
+# we plot our values w/ and w/o the influence points
+housePartition$test %>%
+  dplyr::select(-c(ocean_proximity)) %>%
+  pivot_longer(cols = -median_house_value) %>%
+  ggplot(aes(x = value, y= median_house_value)) +
+  facet_wrap(~name, scales = 'free_x') +
+  geom_point(size = 0.35) +
+  geom_smooth(method = "lm", se = FALSE, alpha = 0.15) +
+  labs(x = "", y = "Median House Value", title = 'With Influential Point')
+
+housePartition$test[-unusual_idx, ] %>%
+  dplyr::select(-c(ocean_proximity)) %>%
+  pivot_longer(cols = -median_house_value) %>%
+  ggplot(aes(x = value, y= median_house_value)) +
+  facet_wrap(~name, scales = 'free_x') +
+  geom_point(size = 0.35) +
+  geom_smooth(method = "lm", se = FALSE, alpha = 0.15) +
+  labs(x = "", y = "Median House Value", title = 'Without Influential Point')
+```
+
+Analyzing the residuals, leverage values, and cook's distances for all of the testing data, we noticed there was one row with a significantly higher cook's distance than other points (more than the other two points that unusual cook's distances) When plotting the model fit with and without that particular row, we observed that the fit was pulled a little towards the influential point. However, we agreed that the fit didn't change a considerable amount, so we continued with our confidence and prediction interval calculations including the row in our data. 
+
+### Confidence and Prediction Intervals
+
+```{r confidence intervals}
+new <- housePartition$test
+dummy_data <- model.matrix(~ ocean_proximity - 1, data = housePartition$test)
+new <- cbind(housePartition$test, dummy_data) %>% dplyr::select(-ocean_proximity)
+set.seed(1234567)
+house_single_complete <- sample_n(new, 1)
+house_single <- house_single_complete %>% dplyr::select(-median_house_value)
+
+new <- new %>% slice(-as.numeric(rownames(house_single)))
+
+x_bar <- new %>% dplyr::select(-median_house_value) %>% summarize(across(everything(),mean))
+
+# confidence intervals
+predict(lm(median_house_value ~ housing_median_age + total_rooms + 
+    total_bedrooms + population + households + median_income + 
+    housing_median_age:total_rooms + housing_median_age:population + 
+    housing_median_age:households + total_rooms:total_bedrooms + 
+    total_rooms:population + total_bedrooms:population + total_bedrooms:households + 
+    total_bedrooms:median_income + population:median_income
+    , data = housePartition$test), newdata = x_bar, interval = 'confidence', level = 0.95)
+```
+
+With 95% confidence, the mean median house value for a block with measurements equal to the mean of average in the data is estimated to be between \$184570.20 and \$219761.1
+
+```{r prediciton intervals}
+predict(lm(median_house_value ~ housing_median_age + total_rooms + 
+    total_bedrooms + population + households + median_income + 
+    housing_median_age:total_rooms + housing_median_age:population + 
+    housing_median_age:households + total_rooms:total_bedrooms + 
+    total_rooms:population + total_bedrooms:population + total_bedrooms:households + 
+    total_bedrooms:median_income + population:median_income
+    , data = housePartition$test), newdata = house_single, interval = 'predict', level = 0.95)
+```
+
+With 95% confidence, the median house value for the particular sampled block is estimated to be between \$73722.94 and \$313399.90 (the particular block has the measurements: housing_median_age = 44, total_rooms = 2526, total_bedrooms = 579, population = 1423, households = 573, median_income = 2.5363, and ocean_proximity of <1H OCEAN).
+
+## Conclusion 
+We first created two models, one designed with the intention of satisfying the model assumptions and one designed using backwards selection (that satisfied the model assumptions too). Using AIC, BIC, and $R^2_{adj}$, we selected a model with a lot of interaction terms that reflected the high correlation we saw between some of the explanatory variables. We then analyzed the significance of each predictor in our model and the $R^2_{adj}$ to explain what variables were the best predictors for median house value. With the model, we also analyzed the unusual observations in our data and how the points with high influence affected the fit of the model. Using the same model, we also calculated a 95% confidence interval for the mean median house price and a 95% prediction interval for a particular neighborhood.

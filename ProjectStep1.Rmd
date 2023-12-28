@@ -1,0 +1,126 @@
+---
+title: '(F23) PSTAT 126: Project Step 1'
+author: "Anthony Cu and William Mahnke"
+date: "2023-10-22"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(skimr)
+```
+
+## Our Dataset
+
+We plan on using the California Housing dataset curated from Kaggle. The data is compiled from a 1990 California survey, providing information on a specified district in the state. The data describes homes in a district of California in 1990 in order to represent the larger population of this district during the 1990's. Some limitations of this data include the lack of data about individual houses and the individuals in each house. Each independent observation corresponds to a different block within the district. 
+
+```{r data, echo = F}
+houseData <- read.csv("~/Desktop/Projects/PSTAT 126/Project/housing.csv")
+```
+
+We view our dataset and explored the information provided in columns.
+
+```{r summary, echo = F}
+head(houseData)
+colnames(houseData)
+```
+
+The independent quantitative variable is ocean_proximity. This indicates the location of the house in regards to its distance from the ocean, categorized by less than an 1 hour, inland, near bay, near ocean, or an island. 
+
+The independent qualitative variables are longitude, latitude, housing_median_age, total_rooms, total_bedrooms, population, households, median_income, and median_house_value. 
+Longitude and latitude respectively measure how far west and north a home is. 
+Housing median age indicates the median age of a home within a block. Thus, older homes would have greater values and newer homes would have smaller values. 
+Total rooms and total bedrooms represent the number of these rooms in a home within a block. 
+Population indicates the total number of people living within a block.
+Household indicates the total number of groups living within a home, in a block. 
+Median income represents the median income (measured in $10,000) for households within a block.
+Median house value measures the median house value (measured in $) for households within a block. 
+
+## Manipulating Dataset
+
+In order to create another independent categorical variable, we convert the housing_median_age into age buckets. We use the dplyr package to add an additional column categorizing the median ages into their respective age buckets. 
+
+```{r data manipulation, echo=T}
+houseData <- houseData %>% mutate(ageRange = ifelse(housing_median_age < 10, "<10", 
+                                       ifelse(housing_median_age >= 10 & housing_median_age < 20, "10-20", 
+                                              ifelse(housing_median_age >= 20 & housing_median_age < 30, "20-30",
+                                                     ifelse(housing_median_age >= 30 & housing_median_age < 40, "30-40", 
+                                                            ifelse(housing_median_age >= 40 & housing_median_age < 50, "40-50", "50+")))))) %>%
+   filter(!is.na(total_bedrooms))
+```
+
+We randomly select 300 observations from the dataset of over 500 rows, using the sample() function. This sample was curated randomly, so it is a representative sample of the population. The total proportion of homes based on categorical variables is similar to the proportion breakdown in our random sample. 
+
+We will then store this random sample into a new dataframe named houseData, one that we can collaboratively access for future analyses. 
+
+```{r random sampling, echo = T}
+houseData <- sample_n(houseData, 300, replace = F)
+```
+
+```{r csv, echo = F}
+houseData <- read.csv("~/Desktop/Projects/PSTAT 126/Project/houseData.csv")
+```
+
+## Summarizing Statistics
+
+```{r skimr, echo = T}
+skim(houseData)
+```
+
+We observe that the median house value and the median income are left skewed in their distribution and the housing median age is symmetrically distributed. This leads us to infer that the age of a house doesn't strongly impact the value of the house.
+
+## Visualizations
+
+```{r hist, echo = F}
+ggplot(houseData, aes(x = ageRange)) +
+  geom_bar(fill = "maroon") +
+  theme(axis.ticks.x = element_blank(), axis.ticks.y = element_blank()) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_light() +
+  labs(title = "Frequency of Age Range of California Homes", y = "Frequency",
+       x = "Age Ranges")
+
+ggplot(houseData, aes(x = fct_infreq(ocean_proximity))) +
+  geom_bar(fill = "maroon") +
+  theme(axis.ticks.x = element_blank(), axis.ticks.y = element_blank()) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_light() +
+  labs(title = "Frequency of Ocean Proximity of California Homes", y = "Frequency",
+       x = "Age Ranges")
+```
+
+The histograms of the categorical variables suggest that most of the houses are between 10-40 years old and most of the houses are less than an hour from the ocean. 
+
+```{r plot, echo = F}
+ggplot(houseData, aes(x = median_income)) +
+  geom_boxplot(fill = "maroon", width = 1) +
+  theme_classic() +
+  theme(axis.ticks.x = element_blank(), axis.ticks.y = element_blank(),
+        axis.text.y = element_blank()) +
+  labs(title = "Median Income of California Homes",
+       x = "Median Income (ten thousands)")
+```
+
+The box plot indicates that the median median income was about $35000 with a few outliers to the right. This motivates our study to research how the median income of the block affects the median value of the houses on the block. 
+
+```{r plot2, echo = F}
+ggplot(houseData, aes(x = median_house_value, y = median_income)) +
+  geom_point(size=0.75, color = "maroon") +
+  theme_classic() +
+  theme(axis.ticks.x = element_blank(), axis.ticks.y = element_blank(),
+        axis.text.y = element_blank()) +
+  labs(title = "Median House Value vs Median Income",
+       x = "Median House Value", y = "Median Income")
+```
+
+The figure suggests that median house value and median income are linearly related, i.e. as house values increases in price, median incomes of those homeowners rises. 
+
+## Next Steps 
+
+We are interested in exploring the correlation between median income of homes with their location, measured through longitude and latitude. Furthermore, we hope to analyze the income and house value with other house variables, such as its age range. 
